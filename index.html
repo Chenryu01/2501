@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中華民國象棋遊戲 (本機雙人版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f0f4f8; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 10px; }
+        #game-container { max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1); padding: 15px; display: flex; flex-direction: column; align-items: center; }
+        #canvas-wrapper { background-color: #fffff0; border: 4px solid #8B4513; border-radius: 8px; margin-bottom: 15px; box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.1); overflow: hidden; max-width: 100%; }
+        #xiangqi-canvas { display: block; touch-action: none; }
+        #status-bar { width: 100%; text-align: center; margin-bottom: 10px; font-size: 1.1rem; font-weight: 700; padding: 8px; border-radius: 8px; min-height: 40px; }
+        .control-btn { padding: 8px 15px; border-radius: 9999px; font-weight: 700; transition: all 0.2s ease-in-out; box-shadow: 0 4px #10b981; margin: 5px; background-color: #10b981; color: white; }
+        .control-btn:hover { transform: translateY(-2px); box-shadow: 0 6px #059669; }
+        .control-btn:active { transform: translateY(2px); box-shadow: 0 2px #059669; }
+        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.6); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        .modal-content { background-color: white; padding: 25px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3); text-align: center; max-width: 90%; min-width: 250px; }
+    </style>
+</head>
+<body class="selection:bg-green-100">
+
+    <div id="game-container">
+        <h1 class="text-2xl font-bold text-center mb-3 text-gray-800">
+            象棋 (雙人本機對戰)
+        </h1>
+
+        <!-- Status Bar -->
+        <div id="status-bar" class="mb-4 bg-gray-100 text-gray-700">
+            點擊「新遊戲」開始
+        </div>
+
+        <!-- Canvas Wrapper -->
+        <div id="canvas-wrapper">
+            <canvas id="xiangqi-canvas"></canvas>
+        </div>
+
+        <!-- Controls -->
+        <div class="btn-group flex justify-center">
+            <button id="new-game-btn" class="control-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline-block mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6"/><path d="M2.5 22v-6h6"/><path d="M21.5 8a10 10 0 1 0-7.3-10h-2.1"/><path d="M2.5 16a10 10 0 1 0 7.3 10h2.1"/></svg>
+                新遊戲
+            </button>
+        </div>
+    </div>
+
+    <!-- Custom Modal Structure (replaces alert) -->
+    <div id="custom-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2 id="modal-title" class="text-xl font-bold mb-3 text-gray-800">訊息</h2>
+            <p id="modal-message" class="mb-5 text-gray-700"></p>
+            <button id="modal-close-btn" class="px-6 py-2 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 transition duration-150">
+                確認
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- 遊戲資料常數 ---
+        const INITIAL_BOARD_STATE = [
+            ['車', '馬', '象', '士', '將', '士', '象', '馬', '車'], [null, null, null, null, null, null, null, null, null],
+            [null, '砲', null, null, null, null, null, '砲', null], ['卒', null, '卒', null, '卒', null, '卒', null, '卒'],
+            [null, null, null, null, null, null, null, null, null], [null, null, null, null, null, null, null, null, null],
+            ['兵', null, '兵', null, '兵', null, '兵', null, '兵'], [null, '炮', null, null, null, null, null, '炮', null],
+            [null, null, null, null, null, null, null, null, null], ['俥', '傌', '相', '仕', '帥', '仕', '相', '傌', '俥']
+        ];
+        const PIECE_NAMES = {
+            '將': { side: 'black', type: 'king', label: '將' }, '帥': { side: 'red', type: 'king', label: '帥' },
+            '士': { side: 'black', type: 'guard', label: '士' }, '仕': { side: 'red', type: 'guard', label: '仕' },
+            '象': { side: 'black', type: 'bishop', label: '象' }, '相': { side: 'red', type: 'bishop', label: '相' },
+            '馬': { side: 'black', type: 'horse', label: '馬' }, '傌': { side: 'red', type: 'horse', label: '傌' },
+            '車': { side: 'black', type: 'rook', label: '車' }, '俥': { side: 'red', type: 'rook', label: '俥' },
+            '砲': { side: 'black', type: 'cannon', label: '砲' }, '炮': { side: 'red', type: 'cannon', label: '炮' },
+            '卒': { side: 'black', type: 'pawn', label: '卒' }, '兵': { side: 'red', type: 'pawn', label: '兵' },
+        };
+        const RED_PIECES = ['帥', '仕', '相', '傌', '俥', '炮', '兵'];
+        const BLACK_PIECES = ['將', '士', '象', '馬', '車', '砲', '卒'];
+
+        // Helper function for custom modal (replaces alert)
+        function showModal(message, title = '遊戲訊息') {
+            const modal = document.getElementById('custom-modal');
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-message').innerText = message;
+            modal.classList.remove('hidden');
+        }
+        document.getElementById('modal-close-btn').onclick = () => document.getElementById('custom-modal').classList.add('hidden');
+
+        class XiangqiGame {
+            constructor(canvasId) {
+                this.canvas = document.getElementById(canvasId);
+                this.ctx = this.canvas.getContext('2d');
+                this.statusElement = document.getElementById('status-bar');
+                this.cellSize = 0;
+                this.setupEventListeners();
+                this.resetGame();
+            }
+
+            setupEventListeners() {
+                this.canvas.addEventListener('click', this.handleClick.bind(this));
+                window.addEventListener('resize', this.resizeAndDraw.bind(this));
+                document.getElementById('new-game-btn').addEventListener('click', this.resetGame.bind(this));
+            }
+
+            resizeAndDraw() {
+                const size = Math.min(window.innerWidth - 30, 600);
+                this.cellSize = Math.floor(size / 9.5);
+                this.canvas.width = 8 * this.cellSize + this.cellSize;
+                this.canvas.height = 9 * this.cellSize + this.cellSize;
+                this.drawBoard();
+            }
+
+            resetGame() {
+                this.board = JSON.parse(JSON.stringify(INITIAL_BOARD_STATE));
+                this.turn = 'red';
+                this.selectedPiece = null;
+                this.gameOver = false;
+                this.inCheck = { red: false, black: false };
+                this.resizeAndDraw();
+                showModal("已開始新的雙人本機對戰。", "新遊戲開始");
+            }
+
+            getCoords(r, c) {
+                const margin = this.cellSize * 0.5;
+                return { x: margin + c * this.cellSize, y: margin + r * this.cellSize };
+            }
+
+            /**
+             * 繪製棋盤線條、九宮斜線、河界及棋子
+             */
+            drawBoard() {
+                const ctx = this.ctx;
+                const cs = this.cellSize;
+                const margin = cs * 0.5;
+                ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                ctx.strokeStyle = "#8B4513"; ctx.lineWidth = 2;
+
+                // 繪製線條
+                for (let r = 0; r < 10; r++) { ctx.beginPath(); ctx.moveTo(margin, margin + r * cs); ctx.lineTo(8 * cs + margin, margin + r * cs); ctx.stroke(); }
+                for (let c = 0; c < 9; c++) {
+                    ctx.beginPath();
+                    if (c === 0 || c === 8) { ctx.moveTo(margin + c * cs, margin); ctx.lineTo(margin + c * cs, 9 * cs + margin); }
+                    else { ctx.moveTo(margin + c * cs, margin); ctx.lineTo(margin + c * cs, 4 * cs + margin); ctx.moveTo(margin + c * cs, 5 * cs + margin); ctx.lineTo(margin + c * cs, 9 * cs + margin); }
+                    ctx.stroke();
+                }
+
+                // 繪製河界與九宮格
+                ctx.fillStyle = "#A0522D"; ctx.font = `bold ${cs * 0.5}px 'Noto Sans TC'`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText("楚 河", cs * 2.5 + margin, 4.5 * cs + margin); ctx.fillText("漢 界", cs * 6.5 + margin, 4.5 * cs + margin);
+                
+                // 繪製九宮斜線 (黑方 將/士)
+                ctx.beginPath(); 
+                ctx.moveTo(3 * cs + margin, 0 * cs + margin); ctx.lineTo(5 * cs + margin, 2 * cs + margin);
+                ctx.moveTo(5 * cs + margin, 0 * cs + margin); ctx.lineTo(3 * cs + margin, 2 * cs + margin);
+                ctx.stroke();
+                
+                // 繪製九宮斜線 (紅方 帥/仕)
+                ctx.beginPath(); 
+                ctx.moveTo(3 * cs + margin, 7 * cs + margin); ctx.lineTo(5 * cs + margin, 9 * cs + margin);
+                ctx.moveTo(5 * cs + margin, 7 * cs + margin); ctx.lineTo(3 * cs + margin, 9 * cs + margin);
+                ctx.stroke();
+
+                // 繪製起始位置標記
+                const markers = [
+                    // 炮/砲 (Cannons)
+                    [2, 1], [2, 7], [7, 1], [7, 7],
+                    // 卒/兵 (Pawns/Soldiers)
+                    [3, 0], [3, 2], [3, 4], [3, 6], [3, 8],
+                    [6, 0], [6, 2], [6, 4], [6, 6], [6, 8]
+                ];
+                markers.forEach(([r, c]) => this.drawMarker(r, c));
+
+                // 繪製棋子
+                for (let r = 0; r < 10; r++) { for (let c = 0; c < 9; c++) { if (this.board[r][c]) this.drawPiece(r, c, this.board[r][c]); } }
+
+                // 繪製選定與可移動點
+                if (this.selectedPiece) {
+                    const { r, c } = this.selectedPiece;
+                    const { x, y } = this.getCoords(r, c);
+                    ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(x, y, cs * 0.45, 0, 2 * Math.PI); ctx.stroke();
+
+                    this.getValidMoves(r, c).forEach(move => {
+                        const { x: tx, y: ty } = this.getCoords(move.r, move.c);
+                        ctx.fillStyle = 'rgba(144, 238, 144, 0.5)';
+                        ctx.beginPath(); ctx.arc(tx, ty, cs * 0.15, 0, 2 * Math.PI); ctx.fill();
+                        if (this.board[move.r][move.c] !== null) { ctx.strokeStyle = 'rgba(255, 69, 0, 0.8)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.rect(tx - cs * 0.35, ty - cs * 0.35, cs * 0.7, cs * 0.7); ctx.stroke(); }
+                    });
+                }
+                this.updateStatus();
+            }
+            
+            /**
+             * 繪製棋子
+             */
+            drawPiece(r, c, piece) {
+                const ctx = this.ctx;
+                const { x, y } = this.getCoords(r, c);
+                const cs = this.cellSize;
+                const radius = cs * 0.4;
+                const pieceInfo = PIECE_NAMES[piece];
+
+                // 棋子圓盤
+                ctx.beginPath(); ctx.arc(x, y, radius, 0, 2 * Math.PI); ctx.fillStyle = '#fefefe'; ctx.fill();
+                ctx.strokeStyle = '#8B4513'; ctx.lineWidth = 2; ctx.stroke();
+
+                // 棋子文字
+                ctx.font = `bold ${cs * 0.5}px 'Noto Sans TC'`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                // 顏色修正：紅方使用更深的紅色，黑方使用接近黑色
+                ctx.fillStyle = pieceInfo.side === 'red' ? '#cc0000' : '#000000'; 
+                ctx.fillText(pieceInfo.label, x, y);
+
+                // 將軍狀態標記
+                if ((pieceInfo.type === 'king' && pieceInfo.side === 'red' && this.inCheck.red) || (pieceInfo.type === 'king' && pieceInfo.side === 'black' && this.inCheck.black)) {
+                    ctx.strokeStyle = 'red'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, radius + 3, 0, 2 * Math.PI); ctx.stroke();
+                }
+            }
+
+            /**
+             * 繪製起始位置的標記符號
+             */
+            drawMarker(r, c) {
+                const ctx = this.ctx;
+                const { x, y } = this.getCoords(r, c);
+                const cs = this.cellSize;
+                const s = cs * 0.1; // 標記短線長度
+                const offset = cs * 0.05; // 標記與中心點的距離
+
+                ctx.strokeStyle = "#8B4513";
+                ctx.lineWidth = 1.5;
+
+                const drawSegment = (startX, startY, endX, endY) => {
+                    ctx.beginPath();
+                    ctx.moveTo(startX, startY);
+                    ctx.lineTo(endX, endY);
+                    ctx.stroke();
+                };
+
+                // 繪製四個角落的短線
+                // 左上
+                if (c > 0) {
+                    drawSegment(x - offset, y - offset, x - offset - s, y - offset);
+                    if (r > 0) drawSegment(x - offset, y - offset, x - offset, y - offset - s);
+                    if (r < 9) drawSegment(x - offset, y + offset, x - offset - s, y + offset);
+                }
+                // 右上
+                if (c < 8) {
+                    drawSegment(x + offset, y - offset, x + offset + s, y - offset);
+                    if (r > 0) drawSegment(x + offset, y - offset, x + offset, y - offset - s);
+                    if (r < 9) drawSegment(x + offset, y + offset, x + offset + s, y + offset);
+                }
+                
+                // 修正：炮/砲和兵/卒的標記通常只有兩個或四個角
+                if (r > 0 && r < 9) {
+                    // 左下 (只在河界上方/下方)
+                    if (c > 0 && r !== 5 && r !== 4) drawSegment(x - offset, y + offset, x - offset, y + offset + s);
+                    // 右下
+                    if (c < 8 && r !== 5 && r !== 4) drawSegment(x + offset, y + offset, x + offset, y + offset + s);
+                }
+            }
+
+
+            getBoardIndex(clientX, clientY) {
+                const rect = this.canvas.getBoundingClientRect();
+                const scaleX = this.canvas.width / rect.width;
+                const scaleY = this.canvas.height / rect.height;
+                const margin = this.cellSize * 0.5;
+                const c = Math.round(((clientX - rect.left) * scaleX - margin) / this.cellSize);
+                const r = Math.round(((clientY - rect.top) * scaleY - margin) / this.cellSize);
+                return (r >= 0 && r < 10 && c >= 0 && c < 9) ? { r, c } : null;
+            }
+
+            handleClick(event) {
+                if (this.gameOver) return;
+                const target = this.getBoardIndex(event.clientX, event.clientY);
+                if (!target) return;
+
+                const { r, c } = target;
+                const piece = this.board[r][c];
+
+                if (this.selectedPiece === null) {
+                    if (piece && PIECE_NAMES[piece].side === this.turn) {
+                        this.selectedPiece = { r, c };
+                    }
+                } else {
+                    const { r: sr, c: sc } = this.selectedPiece;
+                    if (r === sr && c === sc) {
+                        this.selectedPiece = null;
+                    } else if (piece && PIECE_NAMES[piece].side === this.turn) {
+                        this.selectedPiece = { r, c };
+                    } else {
+                        if (this.isValidMove(sr, sc, r, c)) {
+                            this.makeMove(sr, sc, r, c);
+                            this.selectedPiece = null;
+                        } else {
+                            this.selectedPiece = null;
+                        }
+                    }
+                }
+                this.drawBoard();
+            }
+
+            makeMove(sr, sc, tr, tc) {
+                const piece = this.board[sr][sc];
+                const targetPiece = this.board[tr][tc];
+
+                if (targetPiece && PIECE_NAMES[targetPiece].type === 'king') {
+                    this.gameOver = true;
+                    this.drawBoard();
+                    showModal(`${this.turn === 'red' ? '紅方' : '黑方'} 勝利！`, "遊戲結束");
+                    return;
+                }
+
+                const originalBoard = JSON.parse(JSON.stringify(this.board));
+                this.board[tr][tc] = piece; this.board[sr][sc] = null;
+
+                if (this.isKingInCheck(this.turn, this.board)) {
+                    this.board = originalBoard;
+                    showModal("此舉會使您的帥/將被將軍！請選擇其他移動。", "警告：自將");
+                    return;
+                }
+
+                const opponentSide = this.turn === 'red' ? 'black' : 'red';
+                this.inCheck[opponentSide] = this.isKingInCheck(opponentSide, this.board);
+
+                if (this.isCheckmate(opponentSide)) {
+                    this.gameOver = true;
+                    this.drawBoard();
+                    showModal(`${this.turn === 'red' ? '紅方' : '黑方'} 勝利！`, "將死");
+                    return;
+                }
+
+                this.turn = opponentSide;
+            }
+
+            piecesBetween(r1, c1, r2, c2, board = this.board) {
+                let count = 0;
+                if (r1 === r2) { const minC = Math.min(c1, c2), maxC = Math.max(c1, c2); for (let c = minC + 1; c < maxC; c++) { if (board[r1][c] !== null) count++; } }
+                else if (c1 === c2) { const minR = Math.min(r1, r2), maxR = Math.max(r1, r2); for (let r = minR + 1; r < maxR; r++) { if (board[r][c1] !== null) count++; } }
+                return count;
+            }
+
+            findKing(side, board = this.board) {
+                const kingLabel = side === 'red' ? '帥' : '將';
+                for (let r = 0; r < 10; r++) { for (let c = 0; c < 9; c++) { if (board[r][c] === kingLabel) return { r, c }; } }
+                return null;
+            }
+
+            canAttack(sr, sc, tr, tc, board) {
+                const piece = board[sr][sc]; if (!piece) return false;
+                const { type, side } = PIECE_NAMES[piece];
+                const dr = Math.abs(tr - sr), dc = Math.abs(tc - sc);
+
+                let valid = false;
+                const originalTargetPiece = board[tr][tc]; board[tr][tc] = 'TEMP'; // For G-G check
+
+                switch (type) {
+                    case 'king':
+                        if (dc === 0 && dr > 0 && this.piecesBetween(sr, sc, tr, tc, board) === 0) valid = true; // 帥/將對面直殺
+                        else if (dr <= 1 && dc <= 1 && (dr + dc > 0)) valid = true; break;
+                    case 'guard': valid = (dr === 1 && dc === 1); break; // 士/仕：只能斜走一步
+                    case 'bishop': valid = (dr === 2 && dc === 2) && (board[sr + (tr > sr ? 1 : -1)][sc + (tc > sc ? 1 : -1)] === null); break;
+                    case 'horse':
+                        valid = (dr === 1 && dc === 2) || (dr === 2 && dc === 1);
+                        if (valid) {
+                            let lr, lc;
+                            if (dr === 1) { lr = sr; lc = sc + (tc > sc ? 1 : -1); } else { lr = sr + (tr > sr ? 1 : -1); lc = sc; }
+                            if (board[lr][lc] !== null) valid = false;
+                        } break;
+                    case 'rook': valid = ((dr === 0 && dc > 0) || (dc === 0 && dr > 0)) && (this.piecesBetween(sr, sc, tr, tc, board) === 0); break;
+                    case 'cannon': valid = ((dr === 0 && dc > 0) || (dc === 0 && dr > 0)) && (this.piecesBetween(sr, sc, tr, tc, board) === (originalTargetPiece === null ? 0 : 1)); break; // 修正：炮/砲吃子必須隔一個，空走不能隔
+                    case 'pawn':
+                        if (side === 'red') { 
+                            if (tr < sr) valid = dr === 1 && dc === 0; 
+                            else if (tr === sr && sr <= 4) valid = dc === 1 && dr === 0; 
+                        } else { 
+                            if (tr > sr) valid = dr === 1 && dc === 0; 
+                            else if (tr === sr && sr >= 5) valid = dc === 1 && dr === 0; 
+                        }
+                        break;
+                }
+                board[tr][tc] = originalTargetPiece; // Restore
+                return valid;
+            }
+
+            isKingInCheck(side, board) {
+                const kingPos = this.findKing(side, board); if (!kingPos) return false;
+                const opponentSide = side === 'red' ? 'black' : 'red';
+                for (let r = 0; r < 10; r++) {
+                    for (let c = 0; c < 9; c++) {
+                        const piece = board[r][c];
+                        if (piece && PIECE_NAMES[piece].side === opponentSide && this.canAttack(r, c, kingPos.r, kingPos.c, board)) return true;
+                    }
+                } return false;
+            }
+
+            isValidMove(sr, sc, tr, tc) {
+                const piece = this.board[sr][sc]; if (!piece) return false;
+                const { type, side } = PIECE_NAMES[piece];
+                const targetPiece = this.board[tr][tc];
+                if (targetPiece && PIECE_NAMES[targetPiece].side === side) return false; // 不能吃自己的棋子
+
+                if (this.canAttack(sr, sc, tr, tc, this.board)) {
+                    // 特定棋子邊界檢查 (帥/將、士/仕、象/相)
+                    if (type === 'king' || type === 'guard') {
+                        if (side === 'red' && (tr < 7 || tc < 3 || tc > 5)) return false;
+                        if (side === 'black' && (tr > 2 || tc < 3 || tc > 5)) return false;
+                    } else if (type === 'bishop') {
+                        if (side === 'red' && tr < 5) return false;
+                        if (side === 'black' && tr > 4) return false;
+                    }
+
+                    // 走法是否會讓自己被將軍
+                    const tempBoard = JSON.parse(JSON.stringify(this.board));
+                    tempBoard[tr][tc] = piece; tempBoard[sr][sc] = null;
+                    if (this.isKingInCheck(side, tempBoard)) return false;
+
+                    return true;
+                }
+                return false;
+            }
+
+            getValidMoves(sr, sc) {
+                const moves = [];
+                for (let tr = 0; tr < 10; tr++) { for (let tc = 0; tc < 9; tc++) { if (this.isValidMove(sr, sc, tr, tc)) moves.push({ r: tr, c: tc }); } }
+                return moves;
+            }
+
+            isCheckmate(side) {
+                if (!this.inCheck[side]) return false;
+                const pieces = side === 'red' ? RED_PIECES : BLACK_PIECES;
+                for (let sr = 0; sr < 10; sr++) {
+                    for (let sc = 0; sc < 9; sc++) {
+                        const piece = this.board[sr][sc];
+                        if (piece && pieces.includes(piece)) {
+                            if (this.getValidMoves(sr, sc).length > 0) return false;
+                        }
+                    }
+                } return true;
+            }
+
+            updateStatus() {
+                const turnName = this.turn === 'red' ? '紅方 (帥)' : '黑方 (將)';
+                let statusText;
+                this.statusElement.classList.remove('bg-green-100', 'text-green-700', 'bg-red-100', 'text-red-700', 'bg-gray-100', 'text-gray-700');
+
+                if (this.gameOver) {
+                    statusText = `${turnName} 勝利！遊戲結束。`;
+                    this.statusElement.classList.add('bg-green-100', 'text-green-700');
+                } else if (this.inCheck[this.turn]) {
+                    statusText = `輪到 ${turnName} 行棋。**被將軍！**`;
+                    this.statusElement.classList.add('bg-red-100', 'text-red-700');
+                } else {
+                    statusText = `輪到 **${turnName}** 行棋。`;
+                    this.statusElement.classList.add('bg-gray-100', 'text-gray-700');
+                }
+                this.statusElement.innerHTML = statusText;
+            }
+        }
+
+        let GameInstance;
+        window.onload = function () {
+            GameInstance = new XiangqiGame('xiangqi-canvas');
+        };
+    </script>
+</body>
+</html>
